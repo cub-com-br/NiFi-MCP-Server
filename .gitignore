@@ -4,4 +4,5 @@ __pycache__/
 venv
 .claude.local.json
 .mcp.json
-
+/build/
+.claude
