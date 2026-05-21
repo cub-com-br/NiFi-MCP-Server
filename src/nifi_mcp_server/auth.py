@@ -5,6 +5,110 @@ from typing import Optional
 
 import requests
 
+import http.cookiejar
+from typing import Literal
+
+
+BrowserName = Literal["auto", "chrome", "firefox"]
+
+
+class BrowserCookieError(RuntimeError):
+	"""Raised when browser cookies cannot be obtained."""
+
+
+class BrowserCookieSource:
+	"""Loads browser cookies scoped to a single domain. Stateless re-read on demand."""
+
+	def __init__(self, browser: BrowserName, domain: str):
+		self.browser = browser
+		self.domain = domain
+
+	def load(self) -> http.cookiejar.CookieJar:
+		try:
+			import browser_cookie3 as bc3
+		except ImportError as e:
+			raise BrowserCookieError(
+				"browser-cookie3 not installed. pip install browser-cookie3."
+			) from e
+
+		attempts = []
+		for name, fn in self._browser_fns():
+			try:
+				jar = fn(domain_name=self.domain)
+				if any(True for _ in jar):
+					return jar
+				attempts.append(f"{name}: no cookies for domain {self.domain}")
+			except bc3.BrowserCookieError as e:
+				attempts.append(f"{name}: {e}")
+			except Exception as e:
+				attempts.append(f"{name}: {type(e).__name__}: {e}")
+
+		raise BrowserCookieError(
+			f"No usable cookies for {self.domain}. Tried:\n  - "
+			+ "\n  - ".join(attempts)
+			+ f"\nLog in to NiFi at https://{self.domain}/ in your browser first."
+		)
+
+	def _browser_fns(self):
+		import browser_cookie3 as bc3
+		if self.browser == "chrome":
+			return [("chrome", bc3.chrome)]
+		if self.browser == "firefox":
+			return [("firefox", bc3.firefox)]
+		return [("chrome", bc3.chrome), ("firefox", bc3.firefox)]
+
+
+XSRF_COOKIE = "__Secure-Request-Token"
+XSRF_HEADER = "Request-Token"
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+class BrowserAuthSession(requests.Session):
+	"""requests.Session with browser-cookie auto-load + XSRF echo on non-GET requests."""
+
+	def __init__(self, source, verify):
+		super().__init__()
+		self.verify = verify
+		self._source = source
+		self._loaded = False
+
+	def _refresh_jar(self) -> None:
+		jar = self._source.load()
+		self.cookies.clear()
+		for c in jar:
+			self.cookies.set_cookie(c)
+		self._loaded = True
+
+	def _ensure_jar(self) -> None:
+		if not self._loaded:
+			self._refresh_jar()
+
+	def _xsrf_value(self):
+		for c in self.cookies:
+			if c.name == XSRF_COOKIE:
+				return c.value
+		return None
+
+	def _attach_xsrf(self, method: str, kwargs: dict) -> None:
+		if method.upper() in SAFE_METHODS:
+			return
+		token = self._xsrf_value()
+		if token is None:
+			return
+		headers = dict(kwargs.get("headers") or {})
+		headers[XSRF_HEADER] = token
+		kwargs["headers"] = headers
+
+	def request(self, method, url, **kwargs):  # type: ignore[override]
+		self._ensure_jar()
+		self._attach_xsrf(method, kwargs)
+		resp = super().request(method, url, **kwargs)
+		if resp.status_code in (401, 403):
+			self._refresh_jar()
+			self._attach_xsrf(method, kwargs)
+			resp = super().request(method, url, **kwargs)  # one retry only
+		return resp
+
 
 class KnoxAuthFactory:
 	def __init__(
@@ -17,6 +121,9 @@ class KnoxAuthFactory:
 		token_endpoint: Optional[str],
 		passcode_token: Optional[str],
 		verify: bool | str,
+		auth_source: str = "",
+		browser: str = "auto",
+		cookie_domain: Optional[str] = None,
 	):
 		self.gateway_url = gateway_url.rstrip("/") if gateway_url else ""
 		self.token = token
@@ -28,8 +135,21 @@ class KnoxAuthFactory:
 		)
 		self.passcode_token = passcode_token
 		self.verify = verify
+		self.auth_source = (auth_source or "").lower()
+		self.browser = (browser or "auto").lower()
+		self.cookie_domain = cookie_domain
 
 	def build_session(self) -> requests.Session:
+		if self.auth_source == "browser":
+			if not self.cookie_domain:
+				raise ValueError(
+					"auth_source='browser' requires cookie_domain (derived from NIFI_API_BASE host)"
+				)
+			return BrowserAuthSession(
+				source=BrowserCookieSource(self.browser, self.cookie_domain),
+				verify=self.verify,
+			)
+
 		session = requests.Session()
 		session.verify = self.verify
 

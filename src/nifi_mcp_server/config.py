@@ -26,6 +26,11 @@ class ServerConfig:
 	# Optional passcode token (e.g., Livy/Knox) for alternate auth patterns
 	knox_passcode_token: Optional[str] = os.getenv("KNOX_PASSCODE_TOKEN")
 
+	# Browser-cookie auth (Python field keeps knox_ prefix for dataclass consistency;
+	# env vars are NIFI_* because cookie auth is not Knox-specific).
+	knox_auth_source: str = os.getenv("NIFI_AUTH_SOURCE", "").lower()
+	knox_browser: str = os.getenv("NIFI_BROWSER", "auto").lower()
+
 	# TLS/HTTP
 	verify_ssl_env: str = os.getenv("KNOX_VERIFY_SSL", "true").lower()
 	ca_bundle: Optional[str] = os.getenv("KNOX_CA_BUNDLE")
@@ -44,6 +49,22 @@ class ServerConfig:
 		if self.ca_bundle:
 			return self.ca_bundle
 		return self.verify_ssl_env not in {"0", "false", "no"}
+
+	def is_browser_auth(self) -> bool:
+		return self.knox_auth_source.lower() == "browser"
+
+	def build_cookie_domain(self) -> str:
+		"""Hostname for cookie filtering, derived from NiFi API base or Knox gateway URL."""
+		from urllib.parse import urlparse
+		base = self.nifi_api_base or self.knox_gateway_url
+		if not base:
+			raise ValueError(
+				"NIFI_API_BASE or KNOX_GATEWAY_URL required for browser auth (need hostname for cookie filter)"
+			)
+		host = urlparse(base).hostname
+		if not host:
+			raise ValueError(f"Could not parse hostname from: {base}")
+		return host
 
 	def build_nifi_base(self) -> str:
 		if self.nifi_api_base:
