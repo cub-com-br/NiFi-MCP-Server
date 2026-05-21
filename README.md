@@ -10,6 +10,7 @@ Model Context Protocol server providing selectable read and write access to Apac
 
 - **Automatic version detection** - Detects NiFi 1.x vs 2.x and adapts behavior
 - **Knox authentication** - Supports Bearer tokens, cookies, and passcode tokens for CDP deployments
+- **Browser cookie auth** - Reuse an existing Chrome/Firefox NiFi login instead of pasting Knox tokens; auto-refreshes on 401/403 and handles the XSRF header
 - **Read-only by default** - Safe exploration of NiFi flows and configuration
 - **Intelligent flow building** - Pattern recognition and requirements gathering for complex flows
 - **24 read-only MCP tools** for exploring NiFi:
@@ -147,6 +148,50 @@ For use with Cloudera Agent Studio, use the `uvx` command:
 }
 ```
 
+### Option 3: Browser Cookie Authentication
+
+Skip Knox tokens entirely by reusing the cookies from a browser you already use to log into NiFi. The server reads the cookie store for the NiFi host from your local Chrome or Firefox profile, automatically attaches the `__Secure-Request-Token` XSRF header on POST/PUT/DELETE, and refreshes the cookie jar once on a 401/403 response before retrying.
+
+**When to use:**
+- You're already logged into NiFi in your browser and want to avoid copy/pasting Knox tokens.
+- Your environment issues short-lived tokens and re-pasting is painful.
+
+**Prerequisites:**
+- Log into NiFi in Chrome or Firefox on the same machine and OS user that runs the MCP server.
+- Install of `browser-cookie3` is handled by the package.
+- On Linux, Chrome cookies are sometimes sealed by the system keyring; if that bites you, pin `NIFI_BROWSER=firefox`.
+
+**Sample `mcp.json` using `uvx`:**
+
+```json
+{
+  "mcpServers": {
+    "nifi-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/cub-com-br/NiFi-MCP-Server@main",
+        "run-server"
+      ],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "NIFI_API_BASE": "https://<your-nifi-host>/nifi-api",
+        "NIFI_AUTH_SOURCE": "browser",
+        "NIFI_BROWSER": "auto",
+        "NIFI_READONLY": "true"
+      }
+    }
+  }
+}
+```
+
+Note: with `NIFI_AUTH_SOURCE=browser`, `KNOX_TOKEN` is not required — the host portion of `NIFI_API_BASE` is used to filter cookies from the browser store.
+
+**Troubleshooting:**
+- `BrowserCookieError: No usable cookies for <host>` — open `https://<host>/` in Chrome or Firefox, log in, then restart the MCP server.
+- Chrome cookies locked by the OS keyring (common on Linux) — set `NIFI_BROWSER=firefox` and log in there instead.
+- 401/403 loops — your browser session likely expired; re-login in the browser.
+
 ## Configuration Options
 
 All configuration is done via environment variables:
@@ -154,15 +199,19 @@ All configuration is done via environment variables:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `NIFI_API_BASE` | Yes* | Full NiFi API URL (e.g., `https://host/nifi-2-dh/cdp-proxy/nifi-app/nifi-api`) |
-| `KNOX_TOKEN` | Yes* | Knox JWT token for authentication |
+| `KNOX_TOKEN` | Yes*† | Knox JWT token for authentication |
 | `KNOX_GATEWAY_URL` | No | Knox gateway URL (alternative to `NIFI_API_BASE`) |
 | `KNOX_COOKIE` | No | Alternative: provide full cookie string instead of token |
 | `KNOX_PASSCODE_TOKEN` | No | Alternative: Knox passcode token (auto-exchanged for JWT) |
+| `NIFI_AUTH_SOURCE` | No | Set to `browser` to read auth cookies from local Chrome/Firefox instead of using Knox token env vars |
+| `NIFI_BROWSER` | No | `auto` (default), `chrome`, or `firefox` — which browser cookie store to read when `NIFI_AUTH_SOURCE=browser` |
 | `NIFI_READONLY` | No | Read-only mode (default: `true`) |
 | `KNOX_VERIFY_SSL` | No | Verify SSL certificates (default: `true`) |
 | `KNOX_CA_BUNDLE` | No | Path to CA certificate bundle |
 
 \* Either `NIFI_API_BASE` or `KNOX_GATEWAY_URL` is required
+
+† Not required when `NIFI_AUTH_SOURCE=browser` (cookies are loaded from the browser instead)
 
 
 For the NIFI_API_BASE, form using the url from Knox (less `-token`), and add the postfix `/nifi-app/nifi-api`
