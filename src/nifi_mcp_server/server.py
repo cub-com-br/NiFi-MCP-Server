@@ -47,6 +47,7 @@ def _redact_sensitive(obj: Any, max_items: int = 200) -> Any:
 def build_client(config: ServerConfig) -> NiFiClient:
 	verify = config.build_verify()
 	nifi_base = config.build_nifi_base()
+	cookie_domain = config.build_cookie_domain() if config.is_browser_auth() else None
 	auth = KnoxAuthFactory(
 		gateway_url=config.knox_gateway_url,
 		token=config.knox_token,
@@ -56,6 +57,9 @@ def build_client(config: ServerConfig) -> NiFiClient:
 		token_endpoint=config.knox_token_endpoint,
 		passcode_token=config.knox_passcode_token,
 		verify=verify,
+		auth_source=config.knox_auth_source,
+		browser=config.knox_browser,
+		cookie_domain=cookie_domain,
 	)
 	session = auth.build_session()
 	return NiFiClient(
@@ -159,10 +163,47 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 	@app.tool()
 	async def get_processor_state(processor_id: str) -> str:
 		"""Get just the state of a processor (RUNNING, STOPPED, DISABLED, etc.).
-		
+
 		Quick status check without fetching full processor details.
 		"""
 		return nifi.get_processor_state(processor_id)
+
+	@app.tool()
+	async def get_processor_provenance(processor_id: str, max_results: int = 5) -> Dict[str, Any]:
+		"""Get latest flowfile provenance events for a processor (read-only).
+
+		Returns events newest-first by eventTime. Each event includes eventType
+		(RECEIVE/SEND/DROP/...), eventTime, flowFileUuid, componentId,
+		componentName, attributes, and lineage info. Submits a provenance query,
+		polls until NiFi finishes it, returns results, and deletes the query.
+		"""
+		data = nifi.query_provenance_by_processor(processor_id, max_results=max_results)
+		return _redact_sensitive(data)
+
+	@app.tool()
+	async def get_flowfile_provenance(flowfile_uuid: str, max_results: int = 10) -> Dict[str, Any]:
+		"""Get provenance events for a single FlowFile UUID across all processors (read-only).
+
+		Returns events newest-first by eventTime — useful for finding the last
+		(terminal) event of a flowfile (DROP/SEND/...) or its full event history.
+		Submits a provenance query scoped by FlowFileUUID, polls until NiFi
+		finishes it, returns results, and deletes the query.
+		"""
+		data = nifi.query_provenance_by_flowfile(flowfile_uuid, max_results=max_results)
+		return _redact_sensitive(data)
+
+	@app.tool()
+	async def get_flowfile_lineage(flowfile_uuid: str) -> Dict[str, Any]:
+		"""Get the lineage graph for a FlowFile UUID (read-only).
+
+		Returns `nodes` (events and flowfile nodes) and `links`
+		(parent->child edges) tracing the flowfile and its ancestors/descendants.
+		Pair with get_flowfile_provenance for per-event attribute detail. Payload
+		can be large for long-lived flowfiles. Submits a lineage query, polls
+		until NiFi finishes it, returns results, and deletes the query.
+		"""
+		data = nifi.query_lineage_by_flowfile(flowfile_uuid)
+		return _redact_sensitive(data)
 	
 	@app.tool()
 	async def check_connection_queue(connection_id: str) -> Dict[str, int]:

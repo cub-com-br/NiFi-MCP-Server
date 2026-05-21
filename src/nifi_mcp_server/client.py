@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Optional, Tuple, List
 from functools import lru_cache
 
@@ -187,6 +188,123 @@ class NiFiClient:
 	def get_bulletins(self, since_ms: Optional[int] = None) -> Dict[str, Any]:
 		params = {"after": since_ms} if since_ms else None
 		return self._get("flow/bulletin-board", params=params)
+
+	def query_provenance_by_processor(
+		self,
+		processor_id: str,
+		max_results: int = 5,
+		poll_interval_s: float = 0.3,
+		poll_timeout_s: float = 15.0,
+	) -> Dict[str, Any]:
+		"""Submit a provenance query scoped to a processor, poll until finished, return results.
+
+		Always deletes the server-side query (best-effort) before returning.
+		"""
+		body = {
+			"provenance": {
+				"request": {
+					"searchTerms": {"ProcessorID": {"value": processor_id}},
+					"maxResults": max_results,
+					"summarize": False,
+				}
+			}
+		}
+		submitted = self._post("provenance", body)
+		query_id = submitted["provenance"]["id"]
+		try:
+			deadline = time.monotonic() + poll_timeout_s
+			while True:
+				data = self._get(f"provenance/{query_id}")
+				if data.get("provenance", {}).get("finished"):
+					return data["provenance"].get("results", {})
+				if time.monotonic() >= deadline:
+					raise NiFiError(
+						f"Provenance query {query_id} did not finish within {poll_timeout_s}s"
+					)
+				time.sleep(poll_interval_s)
+		finally:
+			try:
+				self._delete(f"provenance/{query_id}")
+			except Exception:
+				pass
+
+	def query_provenance_by_flowfile(
+		self,
+		flowfile_uuid: str,
+		max_results: int = 10,
+		poll_interval_s: float = 0.3,
+		poll_timeout_s: float = 15.0,
+	) -> Dict[str, Any]:
+		"""Submit a provenance query scoped to a single FlowFile UUID, poll until finished, return results.
+
+		Always deletes the server-side query (best-effort) before returning.
+		"""
+		body = {
+			"provenance": {
+				"request": {
+					"searchTerms": {"FlowFileUUID": {"value": flowfile_uuid}},
+					"maxResults": max_results,
+					"summarize": False,
+				}
+			}
+		}
+		submitted = self._post("provenance", body)
+		query_id = submitted["provenance"]["id"]
+		try:
+			deadline = time.monotonic() + poll_timeout_s
+			while True:
+				data = self._get(f"provenance/{query_id}")
+				if data.get("provenance", {}).get("finished"):
+					return data["provenance"].get("results", {})
+				if time.monotonic() >= deadline:
+					raise NiFiError(
+						f"Provenance query {query_id} did not finish within {poll_timeout_s}s"
+					)
+				time.sleep(poll_interval_s)
+		finally:
+			try:
+				self._delete(f"provenance/{query_id}")
+			except Exception:
+				pass
+
+	def query_lineage_by_flowfile(
+		self,
+		flowfile_uuid: str,
+		poll_interval_s: float = 0.3,
+		poll_timeout_s: float = 15.0,
+	) -> Dict[str, Any]:
+		"""Submit a lineage query for a FlowFile UUID, poll until finished, return graph results.
+
+		Returns a dict with `nodes` (events and flowfile nodes) and `links`
+		(parent/child edges). Always deletes the server-side lineage query
+		(best-effort) before returning.
+		"""
+		body = {
+			"lineage": {
+				"request": {
+					"lineageRequestType": "FLOWFILE",
+					"uuid": flowfile_uuid,
+				}
+			}
+		}
+		submitted = self._post("provenance/lineage", body)
+		query_id = submitted["lineage"]["id"]
+		try:
+			deadline = time.monotonic() + poll_timeout_s
+			while True:
+				data = self._get(f"provenance/lineage/{query_id}")
+				if data.get("lineage", {}).get("finished"):
+					return data["lineage"].get("results", {})
+				if time.monotonic() >= deadline:
+					raise NiFiError(
+						f"Lineage query {query_id} did not finish within {poll_timeout_s}s"
+					)
+				time.sleep(poll_interval_s)
+		finally:
+			try:
+				self._delete(f"provenance/lineage/{query_id}")
+			except Exception:
+				pass
 
 	def list_parameter_contexts(self) -> Dict[str, Any]:
 		"""List parameter contexts (both 1.x and 2.x, schema may differ slightly)."""
