@@ -8,7 +8,7 @@ import anyio
 
 from .config import ServerConfig
 from .auth import KnoxAuthFactory
-from .client import NiFiClient
+from .client import NiFiClient, NiFiError
 from .flow_builder import analyze_flow_request
 from .best_practices import NiFiBestPractices, SmartFlowBuilder
 from .setup_helper import SetupGuide
@@ -22,6 +22,43 @@ except Exception as e:  # pragma: no cover
 	raise RuntimeError(
 		"The 'mcp' package is required. Install with: pip install mcp"
 	) from e
+
+
+def _summarize_local_modifications(raw: Dict[str, Any]) -> Dict[str, Any]:
+	"""Summarize a NiFi FlowComparisonEntity into a compact, LLM-friendly digest.
+
+	Produces total counts, a histogram of differenceType values, and a
+	per-componentType rollup with each affected component's id/name/change_count.
+	Verbose `difference` strings are dropped; use raw=False to get full detail.
+	"""
+	component_diffs = raw.get("componentDifferences", []) or []
+	type_histogram: Dict[str, int] = {}
+	per_type: Dict[str, Dict[str, Any]] = {}
+	total_diffs = 0
+
+	for comp in component_diffs:
+		comp_type = comp.get("componentType", "UNKNOWN")
+		diffs = comp.get("differences", []) or []
+		change_count = len(diffs)
+		total_diffs += change_count
+		for d in diffs:
+			dt = d.get("differenceType", "UNKNOWN")
+			type_histogram[dt] = type_histogram.get(dt, 0) + 1
+		bucket = per_type.setdefault(comp_type, {"count": 0, "components": []})
+		bucket["count"] += 1
+		bucket["components"].append({
+			"id": comp.get("componentId"),
+			"name": comp.get("componentName"),
+			"processGroupId": comp.get("processGroupId"),
+			"change_count": change_count,
+		})
+
+	return {
+		"componentCount": len(component_diffs),
+		"totalDifferences": total_diffs,
+		"differenceTypeHistogram": type_histogram,
+		"byComponentType": per_type,
+	}
 
 
 def _redact_sensitive(obj: Any, max_items: int = 200) -> Any:
@@ -217,11 +254,68 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 	@app.tool()
 	async def get_flow_summary(process_group_id: str) -> Dict[str, Any]:
 		"""Get summary statistics for a process group.
-		
+
 		Returns processor counts by state, connection count, and total queued data.
 		Perfect for understanding the overall health and state of a flow.
 		"""
 		return nifi.get_process_group_summary(process_group_id)
+
+	@app.tool()
+	async def get_version_control_info(process_group_id: str) -> Dict[str, Any]:
+		"""Get version-control info for a process group (read-only, NiFi 1.x).
+
+		Returns the registry/bucket/flow/version that the process group is tracking
+		and its current sync state (e.g. UP_TO_DATE, LOCALLY_MODIFIED, STALE,
+		SYNC_FAILURE). Use this to check whether a process group is under version
+		control before requesting local modifications.
+
+		Returns a structured error if the process group is not under version control.
+		"""
+		try:
+			info = nifi.get_version_control_info(process_group_id)
+		except NiFiError as e:
+			if e.status_code == 404:
+				return {
+					"error": "process_group_not_under_version_control",
+					"process_group_id": process_group_id,
+					"message": str(e),
+				}
+			raise
+		return _redact_sensitive(info)
+
+	@app.tool()
+	async def get_local_modifications(
+		process_group_id: str,
+		summary: bool = True,
+	) -> Dict[str, Any]:
+		"""List local modifications on a process group vs its tracked registry version (read-only, NiFi 1.x).
+
+		Equivalent to NiFi UI's "Show Local Changes". Useful for reviewing
+		uncommitted edits before saving to registry.
+
+		Args:
+		  process_group_id: id of the process group to inspect.
+		  summary: when True (default), return a compact digest with total counts,
+		    a differenceType histogram, and per-componentType rollup with each
+		    affected component's id/name/change_count. When False, return the raw
+		    FlowComparisonEntity (redacted) with full per-difference detail.
+
+		Returns a structured error if the process group is not under version control.
+		"""
+		try:
+			raw = nifi.get_local_modifications(process_group_id)
+		except NiFiError as e:
+			if e.status_code == 404:
+				return {
+					"error": "process_group_not_under_version_control",
+					"process_group_id": process_group_id,
+					"message": str(e),
+				}
+			raise
+		raw = _redact_sensitive(raw)
+		if not summary:
+			return raw
+		return _summarize_local_modifications(raw)
 	
 	@app.tool()
 	async def analyze_flow_build_request(user_request: str) -> Dict[str, Any]:

@@ -13,7 +13,7 @@ Model Context Protocol server providing selectable read and write access to Apac
 - **Browser cookie auth** - Reuse an existing Chrome/Firefox NiFi login instead of pasting Knox tokens; auto-refreshes on 401/403 and handles the XSRF header
 - **Read-only by default** - Safe exploration of NiFi flows and configuration
 - **Intelligent flow building** - Pattern recognition and requirements gathering for complex flows
-- **24 read-only MCP tools** for exploring NiFi:
+- **26 read-only MCP tools** for exploring NiFi:
   - `get_nifi_version()` - Version and build information
   - `get_root_process_group()` - Root process group details
   - `list_processors(process_group_id)` - List processors in a process group
@@ -38,6 +38,8 @@ Model Context Protocol server providing selectable read and write access to Apac
   - `get_setup_instructions()` - Interactive setup guidance for NiFi MCP Server
   - `get_best_practices_guide()` - Best practices for building NiFi flows
   - `get_recommended_workflow(flow_type)` - Step-by-step guidance for common flow patterns
+  - `get_version_control_info(process_group_id)` - Version-control state (registry/bucket/flow/version + sync state e.g. LOCALLY_MODIFIED) for a process group (NiFi 1.x)
+  - `get_local_modifications(process_group_id, summary=True)` - List local changes vs tracked registry version (NiFi UI's "Show Local Changes"); `summary=True` returns grouped digest, `summary=False` returns raw FlowComparisonEntity (NiFi 1.x)
 - **42 write operations** (when `NIFI_READONLY=false`):
   - `start_processor(processor_id, version)` - Start a processor
   - `stop_processor(processor_id, version)` - Stop a processor

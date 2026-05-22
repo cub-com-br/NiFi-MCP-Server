@@ -176,6 +176,14 @@ class NiFiClient:
 			params={"version": version, "disconnectedNodeAcknowledged": str(disconnected_ack).lower()}
 		)
 
+	def get_version_control_info(self, pg_id: str) -> Dict[str, Any]:
+		"""Get version-control info for a process group (registry/bucket/flow/version + sync state)."""
+		return self._get(f"versions/process-groups/{pg_id}")
+
+	def get_local_modifications(self, pg_id: str) -> Dict[str, Any]:
+		"""Get list of local modifications (FlowComparisonEntity) vs tracked registry version."""
+		return self._get(f"versions/process-groups/{pg_id}/local-modifications")
+
 	def list_processors(self, pg_id: str) -> Dict[str, Any]:
 		return self._get(f"process-groups/{pg_id}/processors")
 
