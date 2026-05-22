@@ -176,6 +176,38 @@ class NiFiClient:
 			params={"version": version, "disconnectedNodeAcknowledged": str(disconnected_ack).lower()}
 		)
 
+	def get_version_control_info(self, pg_id: str) -> Dict[str, Any]:
+		"""Get version-control info for a process group.
+
+		NiFi has no bare `GET /versions/process-groups/{id}` endpoint; VCI is
+		exposed on the ProcessGroupEntity under `component.versionControlInformation`.
+		Returns the VCI dict (registry/bucket/flow/version + state) when present,
+		or a dict with `versioned: False` when the PG is not under version control.
+		"""
+		pg = self._get(f"process-groups/{pg_id}")
+		vci = (pg.get("component") or {}).get("versionControlInformation")
+		if not vci:
+			return {
+				"versioned": False,
+				"process_group_id": pg_id,
+				"process_group_name": (pg.get("component") or {}).get("name"),
+			}
+		return {
+			"versioned": True,
+			"process_group_id": pg_id,
+			"process_group_name": (pg.get("component") or {}).get("name"),
+			"versionControlInformation": vci,
+		}
+
+	def get_local_modifications(self, pg_id: str) -> Dict[str, Any]:
+		"""Get list of local modifications (FlowComparisonEntity) vs tracked registry version.
+
+		Note: real NiFi 1.x endpoint is `/process-groups/{id}/local-modifications`
+		(observed in browser network tab), not under `/versions/...` as some
+		references suggest.
+		"""
+		return self._get(f"process-groups/{pg_id}/local-modifications")
+
 	def list_processors(self, pg_id: str) -> Dict[str, Any]:
 		return self._get(f"process-groups/{pg_id}/processors")
 
