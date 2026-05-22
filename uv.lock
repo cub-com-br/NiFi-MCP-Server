@@ -606,7 +606,7 @@ wheels = [
 
 [[package]]
 name = "nifi-mcp-server"
-version = "0.8.0"
+version = "0.8.2+snapshot.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },

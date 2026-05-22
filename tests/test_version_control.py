@@ -23,35 +23,56 @@ def _client(httpserver) -> NiFiClient:
 # ---------- client: get_version_control_info ----------
 
 
-def test_get_version_control_info_happy_path(httpserver):
+def test_get_version_control_info_versioned(httpserver):
+    vci = {
+        "groupId": PG_ID,
+        "registryId": "reg-1",
+        "bucketId": "bkt-1",
+        "flowId": "flw-1",
+        "version": 3,
+        "state": "LOCALLY_MODIFIED",
+        "stateExplanation": "Local changes have been made",
+    }
     payload = {
-        "versionControlInformation": {
-            "groupId": PG_ID,
-            "registryId": "reg-1",
-            "bucketId": "bkt-1",
-            "flowId": "flw-1",
-            "version": 3,
-            "state": "LOCALLY_MODIFIED",
-            "stateExplanation": "Local changes have been made",
+        "component": {
+            "id": PG_ID,
+            "name": "Sienge Integration",
+            "versionControlInformation": vci,
         }
     }
     httpserver.expect_oneshot_request(
-        f"/versions/process-groups/{PG_ID}", method="GET"
+        f"/process-groups/{PG_ID}", method="GET"
     ).respond_with_json(payload)
 
     result = _client(httpserver).get_version_control_info(PG_ID)
-    assert result == payload
+    assert result == {
+        "versioned": True,
+        "process_group_id": PG_ID,
+        "process_group_name": "Sienge Integration",
+        "versionControlInformation": vci,
+    }
     httpserver.check_assertions()
 
 
-def test_get_version_control_info_404_raises_nifierror(httpserver):
-    httpserver.expect_request(
-        f"/versions/process-groups/{PG_ID}", method="GET"
-    ).respond_with_data("Process group is not under version control", status=404)
+def test_get_version_control_info_not_versioned(httpserver):
+    payload = {
+        "component": {
+            "id": PG_ID,
+            "name": "Plain PG",
+            "versionControlInformation": None,
+        }
+    }
+    httpserver.expect_oneshot_request(
+        f"/process-groups/{PG_ID}", method="GET"
+    ).respond_with_json(payload)
 
-    with pytest.raises(NiFiError) as exc:
-        _client(httpserver).get_version_control_info(PG_ID)
-    assert exc.value.status_code == 404
+    result = _client(httpserver).get_version_control_info(PG_ID)
+    assert result == {
+        "versioned": False,
+        "process_group_id": PG_ID,
+        "process_group_name": "Plain PG",
+    }
+    httpserver.check_assertions()
 
 
 # ---------- client: get_local_modifications ----------
@@ -82,7 +103,7 @@ def test_get_local_modifications_happy_path(httpserver):
         ]
     }
     httpserver.expect_oneshot_request(
-        f"/versions/process-groups/{PG_ID}/local-modifications", method="GET"
+        f"/process-groups/{PG_ID}/local-modifications", method="GET"
     ).respond_with_json(payload)
 
     result = _client(httpserver).get_local_modifications(PG_ID)

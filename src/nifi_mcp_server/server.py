@@ -264,23 +264,14 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 	async def get_version_control_info(process_group_id: str) -> Dict[str, Any]:
 		"""Get version-control info for a process group (read-only, NiFi 1.x).
 
-		Returns the registry/bucket/flow/version that the process group is tracking
-		and its current sync state (e.g. UP_TO_DATE, LOCALLY_MODIFIED, STALE,
-		SYNC_FAILURE). Use this to check whether a process group is under version
-		control before requesting local modifications.
-
-		Returns a structured error if the process group is not under version control.
+		Returns `{versioned: True, versionControlInformation: {...}}` with
+		registry/bucket/flow/version + current sync state (UP_TO_DATE,
+		LOCALLY_MODIFIED, STALE, SYNC_FAILURE) when the PG is under version
+		control, otherwise `{versioned: False, ...}`. Reads VCI from the
+		ProcessGroupEntity (`GET /process-groups/{id}`) since NiFi has no bare
+		`GET /versions/process-groups/{id}` endpoint.
 		"""
-		try:
-			info = nifi.get_version_control_info(process_group_id)
-		except NiFiError as e:
-			if e.status_code == 404:
-				return {
-					"error": "process_group_not_under_version_control",
-					"process_group_id": process_group_id,
-					"message": str(e),
-				}
-			raise
+		info = nifi.get_version_control_info(process_group_id)
 		return _redact_sensitive(info)
 
 	@app.tool()

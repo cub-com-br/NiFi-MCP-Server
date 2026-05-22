@@ -1,0 +1,1 @@
+- Always bump pyproject version with a +SNAPSHOT-0.x suffix, increasing x after every finished fix/feature implementation
