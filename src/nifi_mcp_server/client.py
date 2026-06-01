@@ -63,6 +63,49 @@ class NiFiClient:
 		stop=stop_after_attempt(3),
 		reraise=True,
 	)
+	def _get_raw(self, path: str) -> Tuple[bytes, str]:
+		"""GET returning raw bytes + Content-Type (for binary/non-JSON endpoints)."""
+		resp = self.session.get(self._url(path), timeout=self.timeout)
+		if not resp.ok:
+			error_body = resp.text if resp.text else "(empty response)"
+			raise NiFiError(
+				f"GET {path} failed: {resp.reason}",
+				status_code=resp.status_code,
+				response_body=error_body,
+			)
+		return resp.content, resp.headers.get("Content-Type", "")
+
+	def get_provenance_event_content(self, event_id: str, direction: str = "input") -> Dict[str, Any]:
+		"""Download the content claim of a provenance event's flowfile (read-only).
+
+		direction: 'input' (claim entering the event) or 'output'. Returns the
+		content decoded as utf-8 text when possible, otherwise base64-encoded.
+		"""
+		if direction not in ("input", "output"):
+			raise ValueError("direction must be 'input' or 'output'")
+		raw, ctype = self._get_raw(f"provenance-events/{event_id}/content/{direction}")
+		try:
+			content = raw.decode("utf-8")
+			encoding = "utf-8"
+		except UnicodeDecodeError:
+			import base64
+			content = base64.b64encode(raw).decode("ascii")
+			encoding = "base64"
+		return {
+			"eventId": event_id,
+			"direction": direction,
+			"contentType": ctype,
+			"encoding": encoding,
+			"sizeBytes": len(raw),
+			"content": content,
+		}
+
+	@retry(
+		retry=retry_if_exception_type((NiFiError, requests.HTTPError, requests.ConnectionError, requests.Timeout)),
+		wait=wait_exponential(multiplier=0.5, min=0.5, max=5),
+		stop=stop_after_attempt(3),
+		reraise=True,
+	)
 	def _put(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
 		resp = self.session.put(self._url(path), json=data, timeout=self.timeout)
 		if not resp.ok:

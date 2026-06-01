@@ -241,7 +241,18 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 		"""
 		data = nifi.query_lineage_by_flowfile(flowfile_uuid)
 		return _redact_sensitive(data)
-	
+
+	@app.tool()
+	async def get_provenance_event_content(event_id: str, direction: str = "input") -> Dict[str, Any]:
+		"""Download the content of a provenance event's flowfile (read-only).
+
+		direction: 'input' (content claim entering the event) or 'output'.
+		For DROP/terminal events use 'input'. Returns {eventId, direction,
+		contentType, encoding ('utf-8'|'base64'), sizeBytes, content}.
+		"""
+		data = nifi.get_provenance_event_content(event_id, direction)
+		return _redact_sensitive(data)
+
 	@app.tool()
 	async def check_connection_queue(connection_id: str) -> Dict[str, int]:
 		"""Check queue size for a connection (flowfile count and bytes).
