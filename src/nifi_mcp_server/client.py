@@ -268,17 +268,26 @@ class NiFiClient:
 		self,
 		processor_id: str,
 		max_results: int = 5,
+		search_terms: Optional[Dict[str, str]] = None,
 		poll_interval_s: float = 0.3,
 		poll_timeout_s: float = 15.0,
 	) -> Dict[str, Any]:
 		"""Submit a provenance query scoped to a processor, poll until finished, return results.
 
+		`search_terms` extra key/value pairs are ANDed with the ProcessorID term. Keys
+		must be NiFi built-in fields (EventType, Filename, ...) or provenance-indexed
+		flowfile attributes (see query_provenance_search_options); a non-indexed key
+		matches nothing rather than erroring.
+
 		Always deletes the server-side query (best-effort) before returning.
 		"""
+		terms = {"ProcessorID": {"value": processor_id}}
+		for k, v in (search_terms or {}).items():
+			terms[k] = {"value": str(v)}
 		body = {
 			"provenance": {
 				"request": {
-					"searchTerms": {"ProcessorID": {"value": processor_id}},
+					"searchTerms": terms,
 					"maxResults": max_results,
 					"summarize": False,
 				}
@@ -302,6 +311,11 @@ class NiFiClient:
 				self._delete(f"provenance/{query_id}")
 			except Exception:
 				pass
+
+	def query_provenance_search_options(self) -> Dict[str, Any]:
+		"""Return NiFi's provenance search-options: the fields/attributes that can be
+		used as searchTerms keys (built-ins plus indexed flowfile attributes)."""
+		return self._get("provenance/search-options")
 
 	def query_provenance_by_flowfile(
 		self,

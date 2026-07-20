@@ -1,6 +1,6 @@
 [project]
 name = "nifi-mcp-server"
-version = "0.8.2+SNAPSHOT.0.2"
+version = "0.8.2+SNAPSHOT.0.3"
 description = "MCP server for Apache NiFi behind Knox with flow building capabilities"
 readme = "README.md"
 requires-python = ">=3.10"
