@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import anyio
 
@@ -79,6 +79,19 @@ def _redact_sensitive(obj: Any, max_items: int = 200) -> Any:
 			]
 		return [_redact_sensitive(x, max_items) for x in obj]
 	return obj
+
+
+def _project_event_attributes(data: Dict[str, Any], include_attributes: Optional[List[str]]) -> Dict[str, Any]:
+	"""Project each provenance event's `attributes` list down to only the named
+	attributes. No-op when include_attributes is None. Mutates and returns `data`."""
+	if include_attributes is None:
+		return data
+	keep = set(include_attributes)
+	for event in data.get("provenanceEvents", []):
+		attrs = event.get("attributes")
+		if isinstance(attrs, list):
+			event["attributes"] = [a for a in attrs if a.get("name") in keep]
+	return data
 
 
 def build_client(config: ServerConfig) -> NiFiClient:
@@ -206,15 +219,32 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 		return nifi.get_processor_state(processor_id)
 
 	@app.tool()
-	async def get_processor_provenance(processor_id: str, max_results: int = 5) -> Dict[str, Any]:
+	async def get_processor_provenance(
+		processor_id: str,
+		max_results: int = 5,
+		search_terms: Optional[Dict[str, str]] = None,
+		include_attributes: Optional[List[str]] = None,
+	) -> Dict[str, Any]:
 		"""Get latest flowfile provenance events for a processor (read-only).
 
 		Returns events newest-first by eventTime. Each event includes eventType
 		(RECEIVE/SEND/DROP/...), eventTime, flowFileUuid, componentId,
 		componentName, attributes, and lineage info. Submits a provenance query,
 		polls until NiFi finishes it, returns results, and deletes the query.
+
+		search_terms: extra key/value filters ANDed with the processor scope. Keys
+		must be NiFi built-in fields or provenance-indexed flowfile attributes (call
+		get_provenance_search_options to see valid keys); a non-indexed key matches
+		nothing. Example: {"apiClientId": "prolotes"}.
+
+		include_attributes: when set, each event's `attributes` is projected down to
+		only these names — use it to strip large attributes and keep the response
+		within token limits. Default None keeps all attributes.
 		"""
-		data = nifi.query_provenance_by_processor(processor_id, max_results=max_results)
+		data = nifi.query_provenance_by_processor(
+			processor_id, max_results=max_results, search_terms=search_terms
+		)
+		data = _project_event_attributes(data, include_attributes)
 		return _redact_sensitive(data)
 
 	@app.tool()
@@ -241,7 +271,30 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 		"""
 		data = nifi.query_lineage_by_flowfile(flowfile_uuid)
 		return _redact_sensitive(data)
-	
+
+	@app.tool()
+	async def get_provenance_event_content(event_id: str, direction: str = "input") -> Dict[str, Any]:
+		"""Download the content of a provenance event's flowfile (read-only).
+
+		direction: 'input' (content claim entering the event) or 'output'.
+		For DROP/terminal events use 'input'. Returns {eventId, direction,
+		contentType, encoding ('utf-8'|'base64'), sizeBytes, content}.
+		"""
+		data = nifi.get_provenance_event_content(event_id, direction)
+		return _redact_sensitive(data)
+
+	@app.tool()
+	async def get_provenance_search_options() -> Dict[str, Any]:
+		"""List the provenance search fields/attributes NiFi accepts as searchTerms (read-only).
+
+		Returns NiFi's searchable fields — built-ins plus flowfile attributes indexed
+		via nifi.provenance.repository.indexed.attributes. Use this to confirm a key
+		(e.g. apiClientId) is indexed before passing it as a get_processor_provenance
+		search_terms filter; keys not listed here match nothing.
+		"""
+		data = nifi.query_provenance_search_options()
+		return _redact_sensitive(data)
+
 	@app.tool()
 	async def check_connection_queue(connection_id: str) -> Dict[str, int]:
 		"""Check queue size for a connection (flowfile count and bytes).
