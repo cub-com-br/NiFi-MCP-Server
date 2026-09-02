@@ -606,7 +606,7 @@ wheels = [
 
 [[package]]
 name = "nifi-mcp-server"
-version = "0.8.2+snapshot.0.3"
+version = "0.8.2+snapshot.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -628,7 +628,7 @@ dev = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.4.0" },
     { name = "browser-cookie3", specifier = ">=0.19.1" },
-    { name = "mcp", specifier = ">=1.1.2" },
+    { name = "mcp", specifier = ">=1.1.2,<2" },
     { name = "pydantic", specifier = ">=2.8.2" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "tenacity", specifier = ">=9.0.0" },
