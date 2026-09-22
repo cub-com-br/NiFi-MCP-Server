@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple, List
 from functools import lru_cache
 
@@ -22,6 +23,31 @@ class NiFiError(Exception):
 		if self.response_body:
 			msg = f"{msg}\n\nNiFi API Response:\n{self.response_body}"
 		return msg
+
+
+NIFI_PROVENANCE_DATE_FORMAT = "%m/%d/%Y %H:%M:%S UTC"
+
+
+def to_nifi_provenance_date(value: str) -> str:
+	"""Convert an ISO 8601 date/datetime string to the `MM/dd/yyyy HH:mm:ss UTC`
+	format NiFi's provenance query expects for startDate/endDate.
+
+	Accepts `YYYY-MM-DD` (midnight UTC), `YYYY-MM-DDTHH:MM:SS` (naive = UTC),
+	and any offset-aware form (`Z` or `±HH:MM`), which is converted to UTC.
+	Sub-second precision is dropped. Raises ValueError for non-ISO input.
+	"""
+	text = (value or "").strip()
+	if text.endswith(("Z", "z")):
+		text = text[:-1] + "+00:00"
+	try:
+		parsed = datetime.fromisoformat(text)
+	except ValueError as exc:
+		raise ValueError(
+			f"Expected an ISO 8601 date/datetime (e.g. 2026-09-20 or 2026-09-20T00:00:00Z), got {value!r}"
+		) from exc
+	if parsed.tzinfo is None:
+		parsed = parsed.replace(tzinfo=timezone.utc)
+	return parsed.astimezone(timezone.utc).strftime(NIFI_PROVENANCE_DATE_FORMAT)
 
 
 class NiFiClient:
@@ -269,6 +295,8 @@ class NiFiClient:
 		processor_id: str,
 		max_results: int = 5,
 		search_terms: Optional[Dict[str, str]] = None,
+		start_date: Optional[str] = None,
+		end_date: Optional[str] = None,
 		poll_interval_s: float = 0.3,
 		poll_timeout_s: float = 15.0,
 	) -> Dict[str, Any]:
@@ -279,21 +307,42 @@ class NiFiClient:
 		flowfile attributes (see query_provenance_search_options); a non-indexed key
 		matches nothing rather than erroring.
 
+		`start_date` / `end_date` bound the event-time window (ISO 8601, see
+		to_nifi_provenance_date); either may be omitted.
+
 		Always deletes the server-side query (best-effort) before returning.
 		"""
 		terms = {"ProcessorID": {"value": processor_id}}
 		for k, v in (search_terms or {}).items():
 			terms[k] = {"value": str(v)}
-		body = {
-			"provenance": {
-				"request": {
-					"searchTerms": terms,
-					"maxResults": max_results,
-					"summarize": False,
-				}
-			}
+		return self._run_provenance_query(
+			terms, max_results, start_date, end_date, poll_interval_s, poll_timeout_s
+		)
+
+	def _run_provenance_query(
+		self,
+		search_terms: Dict[str, Dict[str, str]],
+		max_results: int,
+		start_date: Optional[str],
+		end_date: Optional[str],
+		poll_interval_s: float,
+		poll_timeout_s: float,
+	) -> Dict[str, Any]:
+		"""Submit a provenance query, poll until finished, return its results.
+
+		Optional ISO 8601 `start_date` / `end_date` bound the event-time window.
+		Always deletes the server-side query (best-effort) before returning.
+		"""
+		request: Dict[str, Any] = {
+			"searchTerms": search_terms,
+			"maxResults": max_results,
+			"summarize": False,
 		}
-		submitted = self._post("provenance", body)
+		if start_date is not None:
+			request["startDate"] = to_nifi_provenance_date(start_date)
+		if end_date is not None:
+			request["endDate"] = to_nifi_provenance_date(end_date)
+		submitted = self._post("provenance", {"provenance": {"request": request}})
 		query_id = submitted["provenance"]["id"]
 		try:
 			deadline = time.monotonic() + poll_timeout_s
@@ -321,40 +370,26 @@ class NiFiClient:
 		self,
 		flowfile_uuid: str,
 		max_results: int = 10,
+		start_date: Optional[str] = None,
+		end_date: Optional[str] = None,
 		poll_interval_s: float = 0.3,
 		poll_timeout_s: float = 15.0,
 	) -> Dict[str, Any]:
 		"""Submit a provenance query scoped to a single FlowFile UUID, poll until finished, return results.
 
+		`start_date` / `end_date` bound the event-time window (ISO 8601, see
+		to_nifi_provenance_date); either may be omitted.
+
 		Always deletes the server-side query (best-effort) before returning.
 		"""
-		body = {
-			"provenance": {
-				"request": {
-					"searchTerms": {"FlowFileUUID": {"value": flowfile_uuid}},
-					"maxResults": max_results,
-					"summarize": False,
-				}
-			}
-		}
-		submitted = self._post("provenance", body)
-		query_id = submitted["provenance"]["id"]
-		try:
-			deadline = time.monotonic() + poll_timeout_s
-			while True:
-				data = self._get(f"provenance/{query_id}")
-				if data.get("provenance", {}).get("finished"):
-					return data["provenance"].get("results", {})
-				if time.monotonic() >= deadline:
-					raise NiFiError(
-						f"Provenance query {query_id} did not finish within {poll_timeout_s}s"
-					)
-				time.sleep(poll_interval_s)
-		finally:
-			try:
-				self._delete(f"provenance/{query_id}")
-			except Exception:
-				pass
+		return self._run_provenance_query(
+			{"FlowFileUUID": {"value": flowfile_uuid}},
+			max_results,
+			start_date,
+			end_date,
+			poll_interval_s,
+			poll_timeout_s,
+		)
 
 	def query_lineage_by_flowfile(
 		self,

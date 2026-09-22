@@ -224,8 +224,10 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 		max_results: int = 5,
 		search_terms: Optional[Dict[str, str]] = None,
 		include_attributes: Optional[List[str]] = None,
+		start_date: Optional[str] = None,
+		end_date: Optional[str] = None,
 	) -> Dict[str, Any]:
-		"""Get latest flowfile provenance events for a processor (read-only).
+		"""Get flowfile provenance events for a processor (read-only).
 
 		Returns events newest-first by eventTime. Each event includes eventType
 		(RECEIVE/SEND/DROP/...), eventTime, flowFileUuid, componentId,
@@ -240,23 +242,45 @@ def create_server(nifi: NiFiClient, readonly: bool) -> FastMCP:
 		include_attributes: when set, each event's `attributes` is projected down to
 		only these names — use it to strip large attributes and keep the response
 		within token limits. Default None keeps all attributes.
+
+		start_date / end_date: bound the event-time window. ISO 8601 strings:
+		"2026-09-20" (midnight UTC), "2026-09-20T03:00:00-03:00" (offset converted to
+		UTC), "2026-09-20T12:00:00Z". Naive datetimes are treated as UTC. Either
+		bound may be omitted. Without a window NiFi returns the newest events. When
+		`totalCount` equals max_results the result is capped: narrow the window or
+		raise max_results.
 		"""
 		data = nifi.query_provenance_by_processor(
-			processor_id, max_results=max_results, search_terms=search_terms
+			processor_id,
+			max_results=max_results,
+			search_terms=search_terms,
+			start_date=start_date,
+			end_date=end_date,
 		)
 		data = _project_event_attributes(data, include_attributes)
 		return _redact_sensitive(data)
 
 	@app.tool()
-	async def get_flowfile_provenance(flowfile_uuid: str, max_results: int = 10) -> Dict[str, Any]:
+	async def get_flowfile_provenance(
+		flowfile_uuid: str,
+		max_results: int = 10,
+		start_date: Optional[str] = None,
+		end_date: Optional[str] = None,
+	) -> Dict[str, Any]:
 		"""Get provenance events for a single FlowFile UUID across all processors (read-only).
 
 		Returns events newest-first by eventTime — useful for finding the last
 		(terminal) event of a flowfile (DROP/SEND/...) or its full event history.
 		Submits a provenance query scoped by FlowFileUUID, polls until NiFi
 		finishes it, returns results, and deletes the query.
+
+		start_date / end_date: bound the event-time window. ISO 8601 strings
+		("2026-09-20", "2026-09-20T03:00:00-03:00", "2026-09-20T12:00:00Z"); naive
+		datetimes are treated as UTC. Either bound may be omitted.
 		"""
-		data = nifi.query_provenance_by_flowfile(flowfile_uuid, max_results=max_results)
+		data = nifi.query_provenance_by_flowfile(
+			flowfile_uuid, max_results=max_results, start_date=start_date, end_date=end_date
+		)
 		return _redact_sensitive(data)
 
 	@app.tool()
