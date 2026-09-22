@@ -1,3 +1,25 @@
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+# REPO ARQUIVADO
+
+utilizar https://github.com/cub-com-br/cub-nifi-mcp-server
+
 # NiFi MCP Server (via Knox)
 
 Model Context Protocol server providing selectable read and write access to Apache NiFi via Apache Knox.
