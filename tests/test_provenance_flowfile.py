@@ -99,3 +99,24 @@ def test_query_lineage_by_flowfile_submits_polls_deletes(httpserver):
         "lineageRequestType": "FLOWFILE",
         "uuid": FLOWFILE_UUID,
     }
+
+
+def test_query_provenance_by_flowfile_passes_date_window(httpserver):
+    httpserver.expect_ordered_request("/provenance", method="POST").respond_with_json(
+        {"provenance": {"id": QUERY_ID, "finished": False}}
+    )
+    httpserver.expect_ordered_request(f"/provenance/{QUERY_ID}", method="GET").respond_with_json(
+        {"provenance": {"id": QUERY_ID, "finished": True, "results": {"provenanceEvents": []}}}
+    )
+    httpserver.expect_ordered_request(f"/provenance/{QUERY_ID}", method="DELETE").respond_with_json({})
+
+    client = _client(httpserver)
+    client.query_provenance_by_flowfile(
+        FLOWFILE_UUID, start_date="2026-09-20T03:00:00-03:00", end_date="2026-09-21", poll_interval_s=0.01
+    )
+
+    post_req = next(log[0] for log in httpserver.log if log[0].method == "POST")
+    request = post_req.get_json()["provenance"]["request"]
+    assert request["searchTerms"] == {"FlowFileUUID": {"value": FLOWFILE_UUID}}
+    assert request["startDate"] == "09/20/2026 06:00:00 UTC"
+    assert request["endDate"] == "09/21/2026 00:00:00 UTC"
